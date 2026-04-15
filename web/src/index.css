@@ -1,0 +1,35 @@
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #f5f7fb;
+}
+
+#root {
+  min-height: 100%;
+}
+
+/* AntD 表格在窄屏/多列时更顺滑 */
+.ant-table {
+  background: transparent;
+}
+
+.ant-table-container {
+  border-radius: 14px;
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th {
+  background: #fafafa;
+  font-weight: 600;
+}
+
+/* 顶部条更“控制台”一点 */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(8px);
+}
