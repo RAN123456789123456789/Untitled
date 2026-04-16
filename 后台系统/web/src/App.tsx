@@ -8,6 +8,7 @@ import {
   Drawer,
   Input,
   Layout,
+  Progress,
   Select,
   Space,
   Table,
@@ -52,16 +53,13 @@ export default function App() {
   const [selected, setSelected] = useState<Row | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  const [demoSec, setDemoSec] = useState(0);
+  const DEMO_MAX_SEC = 35;
+  const BACKEND_POLL_MS = 10_000;
+
   const appliedRef = useRef<{ q: string; status?: string }>({ q: "", status: undefined });
   const requestSeqRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-
-  const queryString = useMemo(() => {
-    const p = new URLSearchParams();
-    if (q.trim()) p.set("q", q.trim());
-    if (status) p.set("status", status);
-    return p.toString();
-  }, [q, status]);
 
   const buildQueryString = (nextQ: string, nextStatus?: string) => {
     const p = new URLSearchParams();
@@ -113,8 +111,23 @@ export default function App() {
   useEffect(() => {
     appliedRef.current = { q, status };
     void load({ q, status });
-    const t = window.setInterval(() => void load(), 5000);
-    return () => window.clearInterval(t);
+
+    // 后台系统每 10 秒读取一次（对齐你的演示口径）
+    const poll = window.setInterval(() => void load(), BACKEND_POLL_MS);
+
+    // 演示计时器：0 -> 35 秒
+    setDemoSec(0);
+    const tick = window.setInterval(() => {
+      setDemoSec((s) => {
+        if (s >= DEMO_MAX_SEC) return s;
+        return s + 1;
+      });
+    }, 1000);
+
+    return () => {
+      window.clearInterval(poll);
+      window.clearInterval(tick);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
@@ -212,8 +225,16 @@ export default function App() {
                     <Space direction="vertical" size={0}>
                       <Typography.Text strong>处理策略</Typography.Text>
                       <Typography.Text type="secondary">
-                        每 {state ? state.config.INTERVAL_MS / 1000 : 30} 秒处理 {state ? state.config.BATCH_SIZE : 1000} 条
+                        每 {state ? state.config.INTERVAL_MS / 1000 : 10} 秒处理 {state ? state.config.BATCH_SIZE : 1000} 条
                       </Typography.Text>
+                      <Typography.Text type="secondary">
+                        演示计时：{demoSec} / {DEMO_MAX_SEC} 秒（后台每 10 秒自动刷新）
+                      </Typography.Text>
+                      <Progress
+                        percent={Math.round((Math.min(demoSec, DEMO_MAX_SEC) / DEMO_MAX_SEC) * 100)}
+                        size="small"
+                        showInfo={false}
+                      />
                     </Space>
                     <Space direction="vertical" size={0} style={{ textAlign: "right" }}>
                       <Typography.Text type="secondary">

@@ -2,40 +2,41 @@
 setlocal EnableExtensions EnableDelayedExpansion
 title Start Two Systems
 
-REM Always run in a persistent cmd window to avoid instant close on double-click.
+REM Relaunch in a persistent CMD window so it does not close immediately.
 if /I "%~1"=="__IN_CONSOLE__" goto :MAIN
-start "Start Two Systems" "%ComSpec%" /k "\"%~f0\" __IN_CONSOLE__"
+start "Start Two Systems" "%ComSpec%" /k ""%~f0" __IN_CONSOLE__"
 exit /b 0
 
 :MAIN
-
 set "ROOT=%~dp0"
 echo [INFO] Workspace: %ROOT%
 echo.
 
 pushd "!ROOT!" 2>nul
 if errorlevel 1 (
-  echo [ERROR] Cannot access workspace folder.
+  echo [ERROR] Unable to access the workspace folder.
   goto :DONE
 )
 
 where node >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] Node.js not found in PATH.
+  echo [ERROR] Node.js was not found in PATH.
   goto :DONE
 )
+
 where npm >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] npm not found in PATH.
+  echo [ERROR] npm was not found in PATH.
   goto :DONE
 )
 
 if not exist "!ROOT!server\package.json" (
-  echo [ERROR] Missing: !ROOT!server\package.json
+  echo [ERROR] Missing file: !ROOT!server\package.json
   goto :DONE
 )
+
 if not exist "!ROOT!web\package.json" (
-  echo [ERROR] Missing: !ROOT!web\package.json
+  echo [ERROR] Missing file: !ROOT!web\package.json
   goto :DONE
 )
 
@@ -61,8 +62,8 @@ for /d %%D in ("!ROOT!*") do (
 )
 
 if not defined ADMIN_DIR (
-  echo [ERROR] Cannot find admin system folder.
-  echo [HINT] Admin server\src\index.ts should include LOGISTICS_API.
+  echo [ERROR] Could not find the admin system folder.
+  echo [HINT] In the admin project, server\src\index.ts should contain LOGISTICS_API.
   goto :DONE
 )
 
@@ -84,7 +85,7 @@ start "" "http://localhost:5173"
 start "" "http://localhost:5183"
 
 echo.
-echo [OK] Start commands sent.
+echo [OK] Startup commands were sent.
 echo [INFO] If a service fails, check its command window for the exact error.
 echo.
 echo Press any key to close this launcher window.
@@ -101,10 +102,10 @@ set "APP_TITLE=%~1"
 set "APP_DIR=%~2"
 
 if not exist "!APP_DIR!\package.json" (
-  echo [WARN] Skip !APP_TITLE!: package.json not found in "!APP_DIR!"
+  echo [WARN] Skip !APP_TITLE!: package.json was not found in "!APP_DIR!"
   goto :EOF
 )
 
-start "!APP_TITLE!" /D "!APP_DIR!" cmd /k "if not exist node_modules (echo [!APP_TITLE!] node_modules missing, running npm i... && npm i) else (echo [!APP_TITLE!] node_modules found.) && echo [!APP_TITLE!] running npm run dev... && npm run dev || (echo. && echo [!APP_TITLE!] FAILED. Fix error above and rerun start.bat.)"
+start "!APP_TITLE!" /D "!APP_DIR!" cmd /k "if not exist node_modules (echo [!APP_TITLE!] node_modules is missing, running npm i... && npm i) else (echo [!APP_TITLE!] node_modules found.) && echo [!APP_TITLE!] running npm run dev... && npm run dev || (echo. && echo [!APP_TITLE!] FAILED. Fix the error above and rerun start.bat.)"
 goto :EOF
 

@@ -1,0 +1,6 @@
+{
+  "intervalMs": 10000,
+  "demoDurationMs": 0,
+  "problemPerTick": 5,
+  "batchSize": 1000
+}

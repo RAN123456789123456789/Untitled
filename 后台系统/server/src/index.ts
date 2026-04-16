@@ -13,7 +13,7 @@ app.use(express.json({ limit: "2mb" }));
 const LOGISTICS_API = process.env.LOGISTICS_API || "http://localhost:5179";
 const PORT = Number(process.env.PORT || 5189);
 const BATCH_SIZE = Number(process.env.BATCH_SIZE || 1000);
-const INTERVAL_MS = Number(process.env.INTERVAL_MS || 30_000);
+const INTERVAL_MS = Number(process.env.INTERVAL_MS || 10_000);
 
 const dataDir = path.resolve(process.cwd(), "data");
 const problemsPath = path.join(dataDir, "problem_orders.json");
@@ -85,9 +85,6 @@ async function runOneBatch() {
   syncState.running = true;
   syncState.lastError = null;
   try {
-    const existing = loadProblems();
-    const seen = new Set(existing.map(getKey).filter(Boolean));
-
     let offset = 0;
     let scanned = 0;
     let found = 0;
@@ -97,16 +94,15 @@ async function runOneBatch() {
     const page = await fetchShipmentsPage(offset, BATCH_SIZE);
     scanned += page.data.length;
 
+    const nextProblems: ShipmentRow[] = [];
     for (const r of page.data) {
       if (!isProblem(r)) continue;
-      const key = getKey(r);
-      if (!key || seen.has(key)) continue;
-      existing.push(r);
-      seen.add(key);
+      nextProblems.push(r);
       found += 1;
     }
 
-    saveProblems(existing);
+    // 这里做“回溯到当前真实数据内容”：每轮都重建问题件列表，避免无限累计
+    saveProblems(nextProblems);
 
     syncState.scanned = scanned;
     syncState.found = found;
@@ -160,6 +156,7 @@ app.post("/api/run", async (_req, res) => {
   res.json({ ok: true });
 });
 
+void runOneBatch();
 setInterval(() => void runOneBatch(), INTERVAL_MS);
 
 app.listen(PORT, () => {
