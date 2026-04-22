@@ -30,8 +30,8 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
-  // GitHub Pages 基础路径配置
-  base: '/Untitled/',
+  // 使用自定义域名根路径访问，base 设为空字符串
+  base: '/',
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
 })
