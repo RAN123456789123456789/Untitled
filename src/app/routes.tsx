@@ -5,6 +5,7 @@ import CalligraphyDetail from "./pages/CalligraphyDetail";
 import DesignGallery from "./pages/DesignGallery";
 import DesignDetail from "./pages/DesignDetail";
 import PosterGallery from "./pages/PosterGallery";
+import PosterDetail from "./pages/PosterDetail";
 
 export const router = createBrowserRouter([
   {
@@ -14,6 +15,10 @@ export const router = createBrowserRouter([
   {
     path: "/posters",
     Component: PosterGallery,
+  },
+  {
+    path: "/poster/:id",
+    Component: PosterDetail,
   },
   {
     path: "/calligraphy",

@@ -5,6 +5,15 @@
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <title>Untitled</title>
+      <script>
+        const redirectPath = sessionStorage.getItem('gh-pages-redirect');
+        if (redirectPath) {
+          sessionStorage.removeItem('gh-pages-redirect');
+          if (redirectPath !== location.pathname + location.search + location.hash) {
+            history.replaceState(null, '', redirectPath);
+          }
+        }
+      </script>
       <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
     </head>
 

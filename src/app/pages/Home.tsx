@@ -123,7 +123,7 @@ export default function Home() {
               transition={{ duration: 0.6 }}
               className="md:col-span-2 md:row-span-2"
             >
-              <Link to="#" className="group block relative h-full min-h-[500px] rounded-3xl overflow-hidden">
+              <Link to={`/poster/${featuredPosters[0]?.id ?? ''}`} className="group block relative h-full min-h-[500px] rounded-3xl overflow-hidden">
                 <img
                   src={featuredPosters[0]?.imageUrl}
                   alt={featuredPosters[0]?.title}
@@ -150,7 +150,7 @@ export default function Home() {
                 transition={{ duration: 0.6, delay: index * 0.1 }}
                 className={index === 0 ? "md:col-span-2" : "md:col-span-1"}
               >
-                <Link to="#" className="group block relative h-full min-h-[240px] rounded-2xl overflow-hidden">
+                <Link to={`/poster/${poster.id}`} className="group block relative h-full min-h-[240px] rounded-2xl overflow-hidden">
                   <img
                     src={poster.imageUrl}
                     alt={poster.title}
