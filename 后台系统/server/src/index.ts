@@ -6,14 +6,26 @@ import path from "node:path";
 
 type ShipmentRow = Record<string, unknown>;
 
+const KEY = {
+  orderNo: "物流单号",
+  status: "状态",
+  stayDays: "滞留时长",
+  exceptionType: "异常类型",
+} as const;
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 const LOGISTICS_API = process.env.LOGISTICS_API || "http://localhost:5179";
 const PORT = Number(process.env.PORT || 5189);
-const BATCH_SIZE = Number(process.env.BATCH_SIZE || 1000);
+/** 物流 API 单次最大 limit，与 server 中 QuerySchema 上限一致；分页拉全量保证与物流看板数据一一对应 */
+const PAGE_SIZE = Number(process.env.LOGISTICS_PAGE_SIZE || 5000);
 const INTERVAL_MS = Number(process.env.INTERVAL_MS || 10_000);
+const BASE_PROBLEM_COUNT = 100;
+const INCREMENT_PROBLEM_COUNT = 15;
+const PER_TYPE_MIN = 3;
+const PER_TYPE_MAX = 5;
 
 const dataDir = path.resolve(process.cwd(), "data");
 const problemsPath = path.join(dataDir, "problem_orders.json");
@@ -24,8 +36,7 @@ function loadProblems(): ShipmentRow[] {
   try {
     const raw = fs.readFileSync(problemsPath, "utf-8");
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed as ShipmentRow[];
-    return [];
+    return Array.isArray(parsed) ? (parsed as ShipmentRow[]) : [];
   } catch {
     return [];
   }
@@ -35,32 +46,124 @@ function saveProblems(rows: ShipmentRow[]) {
   fs.writeFileSync(problemsPath, JSON.stringify(rows, null, 2), "utf-8");
 }
 
-function getKey(r: ShipmentRow): string {
-  const k = r["物流单号"];
-  return k == null ? "" : String(k);
+function parseStayDays(value: unknown): number {
+  const text = String(value ?? "").trim();
+  const matched = text.match(/(\d+)\s*天/);
+  if (!matched) return 0;
+  const days = Number(matched[1]);
+  return Number.isFinite(days) ? days : 0;
 }
 
-function parseStayDays(v: unknown): number | null {
-  if (v == null) return null;
-  const s = String(v).trim();
-  if (!s) return null;
-  const m = s.match(/(\d+)\s*天/);
-  if (!m) return 0;
-  const days = Number(m[1]);
-  return Number.isFinite(days) ? days : null;
+function isProblem(row: ShipmentRow): boolean {
+  const explicit = String(row[KEY.exceptionType] ?? "").trim();
+  if (explicit && explicit !== "正常履约") return true;
+
+  const status = String(row[KEY.status] ?? "").trim();
+  if (/异常|问题|退回|拦截|破损|丢失|失败|拒收/i.test(status)) return true;
+
+  return parseStayDays(row[KEY.stayDays]) >= 5;
 }
 
-// 规则：
-// - 状态命中“异常/问题/退回/拦截/破损/丢失/失败/拒收”等 -> 问题件
-// - 或者滞留时长 >= 5 天 -> 问题件
-function isProblem(r: ShipmentRow): boolean {
-  const s = (r["状态"] ?? "").toString();
-  if (/异常|问题|退回|拦截|破损|丢失|失败|拒收/i.test(s)) return true;
+function getOrderNo(row: ShipmentRow): string {
+  return String(row[KEY.orderNo] ?? "").trim();
+}
 
-  const stayDays = parseStayDays(r["滞留时长"]);
-  if (stayDays != null && stayDays >= 5) return true;
+type ProblemType = "A" | "B" | "C" | "D" | "OTHER";
 
-  return false;
+function detectProblemType(row: ShipmentRow): ProblemType {
+  const exceptionType = String(row[KEY.exceptionType] ?? "").trim();
+  if (/^A类/i.test(exceptionType) || /未发货|未揽收/.test(exceptionType)) return "A";
+  if (/^B类/i.test(exceptionType) || /运输异常|滞留|温控|断链/.test(exceptionType)) return "B";
+  if (/^C类/i.test(exceptionType) || /客诉|投诉/.test(exceptionType)) return "C";
+  if (/^D类/i.test(exceptionType) || /重复异常|多轮/.test(exceptionType)) return "D";
+
+  const status = String(row[KEY.status] ?? "").trim();
+  if (/未发货|未揽收/.test(status)) return "A";
+  if (/客诉|投诉/.test(status)) return "C";
+  if (/重复|多轮/.test(status)) return "D";
+  return "B";
+}
+
+function pickRowsByRules(candidates: ShipmentRow[], target: number): ShipmentRow[] {
+  const seen = new Set<string>();
+  const deduped = candidates.filter((row) => {
+    const orderNo = getOrderNo(row);
+    if (!orderNo || seen.has(orderNo)) return false;
+    seen.add(orderNo);
+    return true;
+  });
+
+  const groups = new Map<ProblemType, ShipmentRow[]>();
+  for (const row of deduped) {
+    const type = detectProblemType(row);
+    const list = groups.get(type) ?? [];
+    list.push(row);
+    groups.set(type, list);
+  }
+
+  const orderedTypes: ProblemType[] = ["A", "B", "C", "D", "OTHER"];
+  const availableTypes = orderedTypes.filter((type) => (groups.get(type)?.length ?? 0) > 0);
+  if (availableTypes.length === 0) return [];
+
+  const picks: ShipmentRow[] = [];
+  const pickSet = new Set<string>();
+  const pickCountByType = new Map<ProblemType, number>();
+
+  // 第一轮：每种问题优先补到至少 3 条（在总量允许范围内）
+  let remaining = target;
+  for (let i = 0; i < availableTypes.length && remaining > 0; i += 1) {
+    const type = availableTypes[i];
+    const rows = groups.get(type) ?? [];
+    const reserveForOthers = Math.max(0, (availableTypes.length - i - 1) * PER_TYPE_MIN);
+    const maxCanTake = Math.max(0, remaining - reserveForOthers);
+    const need = Math.min(PER_TYPE_MIN, rows.length, maxCanTake);
+    for (let n = 0; n < need; n += 1) {
+      const row = rows.shift();
+      if (!row) break;
+      const orderNo = getOrderNo(row);
+      if (!orderNo || pickSet.has(orderNo)) continue;
+      picks.push(row);
+      pickSet.add(orderNo);
+      pickCountByType.set(type, (pickCountByType.get(type) ?? 0) + 1);
+      remaining -= 1;
+      if (remaining <= 0) break;
+    }
+  }
+
+  // 第二轮：继续补到每种最多 5 条，直到达到 target
+  while (remaining > 0) {
+    let progressed = false;
+    for (const type of availableTypes) {
+      if (remaining <= 0) break;
+      const current = pickCountByType.get(type) ?? 0;
+      if (current >= PER_TYPE_MAX) continue;
+      const rows = groups.get(type) ?? [];
+      const row = rows.shift();
+      if (!row) continue;
+      const orderNo = getOrderNo(row);
+      if (!orderNo || pickSet.has(orderNo)) continue;
+      picks.push(row);
+      pickSet.add(orderNo);
+      pickCountByType.set(type, current + 1);
+      remaining -= 1;
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
+
+  // 兜底：类型分布不够时，用剩余问题件补满目标值
+  if (remaining > 0) {
+    for (const row of deduped) {
+      if (remaining <= 0) break;
+      const orderNo = getOrderNo(row);
+      if (!orderNo || pickSet.has(orderNo)) continue;
+      picks.push(row);
+      pickSet.add(orderNo);
+      remaining -= 1;
+    }
+  }
+
+  return picks;
 }
 
 async function fetchShipmentsPage(offset: number, limit: number) {
@@ -72,6 +175,24 @@ async function fetchShipmentsPage(offset: number, limit: number) {
   return (await res.json()) as { total: number; data: ShipmentRow[] };
 }
 
+async function fetchAllShipments(): Promise<{ total: number; data: ShipmentRow[] }> {
+  const limit = Math.min(5000, Math.max(1, PAGE_SIZE));
+  let offset = 0;
+  const data: ShipmentRow[] = [];
+  let total = 0;
+
+  for (;;) {
+    const page = await fetchShipmentsPage(offset, limit);
+    total = page.total;
+    data.push(...page.data);
+    if (page.data.length === 0) break;
+    offset += page.data.length;
+    if (data.length >= total) break;
+  }
+
+  return { total, data };
+}
+
 let syncState = {
   running: false,
   lastRunAt: null as string | null,
@@ -80,47 +201,58 @@ let syncState = {
   found: 0,
 };
 
+async function resetProblemsFromLatest() {
+  const page = await fetchAllShipments();
+  const allProblems = page.data.filter((row) => isProblem(row));
+  const resetRows = pickRowsByRules(allProblems, BASE_PROBLEM_COUNT);
+  saveProblems(resetRows);
+  syncState.scanned = page.data.length;
+  syncState.found = resetRows.length;
+}
+
 async function runOneBatch() {
   if (syncState.running) return;
   syncState.running = true;
   syncState.lastError = null;
+
   try {
-    let offset = 0;
-    let scanned = 0;
-    let found = 0;
+    const page = await fetchAllShipments();
+    const allProblems = page.data.filter((row) => isProblem(row));
+    const existing = loadProblems();
+    const existingOrderNos = new Set(existing.map((row) => getOrderNo(row)).filter(Boolean));
+    const incrementalPool = allProblems.filter((row) => !existingOrderNos.has(getOrderNo(row)));
+    const additions = pickRowsByRules(incrementalPool, INCREMENT_PROBLEM_COUNT);
+    const nextProblems = [...existing, ...additions];
 
-    // 这里按“从头扫描”做示例；真实 20 万数据建议加增量游标/更新时间字段
-    // 每次最多扫描 BATCH_SIZE 条（你说的 1000）
-    const page = await fetchShipmentsPage(offset, BATCH_SIZE);
-    scanned += page.data.length;
-
-    const nextProblems: ShipmentRow[] = [];
-    for (const r of page.data) {
-      if (!isProblem(r)) continue;
-      nextProblems.push(r);
-      found += 1;
-    }
-
-    // 这里做“回溯到当前真实数据内容”：每轮都重建问题件列表，避免无限累计
     saveProblems(nextProblems);
-
-    syncState.scanned = scanned;
-    syncState.found = found;
+    syncState.scanned = page.data.length;
+    syncState.found = additions.length;
     syncState.lastRunAt = new Date().toISOString();
-  } catch (e) {
-    syncState.lastError = e instanceof Error ? e.message : String(e);
+  } catch (error) {
+    syncState.lastError = error instanceof Error ? error.message : String(error);
     syncState.lastRunAt = new Date().toISOString();
   } finally {
     syncState.running = false;
   }
 }
 
-app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true });
+});
 
 app.get("/api/state", (_req, res) => {
   res.json({
     ...syncState,
-    config: { LOGISTICS_API, PORT, BATCH_SIZE, INTERVAL_MS },
+    config: {
+      LOGISTICS_API,
+      PORT,
+      PAGE_SIZE,
+      INTERVAL_MS,
+      BASE_PROBLEM_COUNT,
+      INCREMENT_PROBLEM_COUNT,
+      PER_TYPE_MIN,
+      PER_TYPE_MAX,
+    },
   });
 });
 
@@ -134,20 +266,22 @@ app.get("/api/problems", (req, res) => {
 
   const { q, status } = parsed.data;
   let rows = loadProblems();
+
   if (status && status.trim()) {
-    const st = status.trim();
-    rows = rows.filter((r) => String(r["状态"] ?? "") === st);
+    rows = rows.filter((row) => String(row[KEY.status] ?? "") === status.trim());
   }
+
   if (q && q.trim()) {
     const needle = q.trim();
-    rows = rows.filter((r) => JSON.stringify(r).includes(needle));
+    rows = rows.filter((row) => JSON.stringify(row).includes(needle));
   }
+
   res.json({ total: rows.length, data: rows });
 });
 
 app.get("/api/problems-meta", (_req, res) => {
   const rows = loadProblems();
-  const statuses = Array.from(new Set(rows.map((r) => String(r["状态"] ?? "")).filter(Boolean))).sort();
+  const statuses = Array.from(new Set(rows.map((row) => String(row[KEY.status] ?? "")).filter(Boolean))).sort();
   res.json({ statuses });
 });
 
@@ -156,11 +290,27 @@ app.post("/api/run", async (_req, res) => {
   res.json({ ok: true });
 });
 
-void runOneBatch();
+app.post("/api/reset", async (_req, res) => {
+  if (syncState.running) return res.status(409).json({ error: "busy" });
+  syncState.running = true;
+  syncState.lastError = null;
+  try {
+    await resetProblemsFromLatest();
+    syncState.lastRunAt = new Date().toISOString();
+    res.json({ ok: true });
+  } catch (error) {
+    syncState.lastError = error instanceof Error ? error.message : String(error);
+    syncState.lastRunAt = new Date().toISOString();
+    res.status(500).json({ error: "reset_failed", message: syncState.lastError });
+  } finally {
+    syncState.running = false;
+  }
+});
+
+void resetProblemsFromLatest();
 setInterval(() => void runOneBatch(), INTERVAL_MS);
 
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`Admin API listening on http://localhost:${PORT}`);
 });
-

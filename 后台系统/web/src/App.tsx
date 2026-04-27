@@ -47,7 +47,16 @@ export default function App() {
     lastError: string | null;
     scanned: number;
     found: number;
-    config: { LOGISTICS_API: string; PORT: number; BATCH_SIZE: number; INTERVAL_MS: number };
+    config: {
+      LOGISTICS_API: string;
+      PORT: number;
+      PAGE_SIZE: number;
+      INTERVAL_MS: number;
+      BASE_PROBLEM_COUNT: number;
+      INCREMENT_PROBLEM_COUNT: number;
+      PER_TYPE_MIN: number;
+      PER_TYPE_MAX: number;
+    };
   } | null>(null);
 
   const [selected, setSelected] = useState<Row | null>(null);
@@ -108,6 +117,11 @@ export default function App() {
     await load();
   };
 
+  const resetPool = async () => {
+    await fetchJson("/api/reset", { method: "POST" });
+    await load();
+  };
+
   useEffect(() => {
     appliedRef.current = { q, status };
     void load({ q, status });
@@ -119,8 +133,18 @@ export default function App() {
     setDemoSec(0);
     const tick = window.setInterval(() => {
       setDemoSec((s) => {
-        if (s >= DEMO_MAX_SEC) return s;
-        return s + 1;
+        if (s >= DEMO_MAX_SEC) {
+          window.clearInterval(poll);
+          window.clearInterval(tick);
+          return s;
+        }
+        const next = s + 1;
+        if (next >= DEMO_MAX_SEC) {
+          // 演示时间结束后停止自动更新
+          window.clearInterval(poll);
+          window.clearInterval(tick);
+        }
+        return next;
       });
     }, 1000);
 
@@ -203,6 +227,9 @@ export default function App() {
                 <Button icon={<SyncOutlined />} onClick={() => void runOnce()} loading={loading}>
                   处理一批
                 </Button>
+                <Button icon={<ReloadOutlined />} onClick={() => void resetPool()} loading={loading}>
+                  重置
+                </Button>
                 <Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading}>
                   刷新
                 </Button>
@@ -225,10 +252,16 @@ export default function App() {
                     <Space direction="vertical" size={0}>
                       <Typography.Text strong>处理策略</Typography.Text>
                       <Typography.Text type="secondary">
-                        每 {state ? state.config.INTERVAL_MS / 1000 : 10} 秒处理 {state ? state.config.BATCH_SIZE : 1000} 条
+                        每 {state ? state.config.INTERVAL_MS / 1000 : 10} 秒新增{" "}
+                        {state ? state.config.INCREMENT_PROBLEM_COUNT : 15} 条问题件
                       </Typography.Text>
                       <Typography.Text type="secondary">
-                        演示计时：{demoSec} / {DEMO_MAX_SEC} 秒（后台每 10 秒自动刷新）
+                        每种情况每轮约 {state ? state.config.PER_TYPE_MIN : 3}-{state ? state.config.PER_TYPE_MAX : 5} 条，
+                        重置后回到 {state ? state.config.BASE_PROBLEM_COUNT : 100} 条
+                      </Typography.Text>
+                      <Typography.Text type="secondary">
+                        演示计时：{demoSec} / {DEMO_MAX_SEC} 秒
+                        {demoSec >= DEMO_MAX_SEC ? "（演示结束，已停止自动刷新）" : "（后台每 10 秒自动刷新）"}
                       </Typography.Text>
                       <Progress
                         percent={Math.round((Math.min(demoSec, DEMO_MAX_SEC) / DEMO_MAX_SEC) * 100)}

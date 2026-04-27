@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import type { ShipmentRow } from "./shipments";
+import { KEY, applyBusinessFields, detectExceptionCategory, isProblemRow, parseStayDays } from "./businessFields";
 
 export type UpdateDataConfig = {
   intervalMs: number;
@@ -16,17 +17,6 @@ const DEFAULT_CONFIG: UpdateDataConfig = {
   problemPerTick: 5,
   batchSize: 1000,
 };
-
-const KEY = {
-  orderNo: "\u7269\u6d41\u5355\u53f7",
-  status: "\u72b6\u6001",
-  currentCenter: "\u5f53\u524d\u4f4d\u7f6e",
-  prevCenter: "\u4e0a\u4e2a\u6570\u636e\u4e2d\u5fc3",
-  nextCenter: "\u4e0b\u4e2a\u6570\u636e\u4e2d\u5fc3",
-  track: "\u7269\u6d41\u8f68\u8ff9",
-  stayDays: "\u6ede\u7559\u65f6\u957f",
-  updatedAt: "\u66f4\u65b0\u65f6\u95f4",
-} as const;
 
 const STATUS_POOL = [
   "\u8fd0\u8f93\u4e2d",
@@ -62,7 +52,7 @@ function readConfigFromLogisticsFolder(): UpdateDataConfig {
     const parsed = JSON.parse(raw) as Partial<UpdateDataConfig>;
 
     return {
-      intervalMs: toFiniteInt(parsed.intervalMs, DEFAULT_CONFIG.intervalMs, 1000, 60_000),
+      intervalMs: 10_000,
       demoDurationMs: toFiniteInt(parsed.demoDurationMs, DEFAULT_CONFIG.demoDurationMs, 0, 24 * 60 * 60 * 1000),
       problemPerTick: toFiniteInt(parsed.problemPerTick, DEFAULT_CONFIG.problemPerTick, 0, 50),
       batchSize: toFiniteInt(parsed.batchSize, DEFAULT_CONFIG.batchSize, 1, 10_000),
@@ -107,17 +97,6 @@ function stableId(r: ShipmentRow): string {
   return crypto.createHash("sha1").update(JSON.stringify(r)).digest("hex").slice(0, 12);
 }
 
-function parseStayDays(v: unknown): number | null {
-  const text = asString(v).trim();
-  if (!text) return null;
-  const matched = text.match(DAY_RE);
-  if (!matched) return null;
-
-  const days = Number(matched[1]);
-  if (!Number.isFinite(days)) return null;
-  return Math.max(0, Math.floor(days));
-}
-
 function bumpStayDaysText(prev: unknown, targetDays: number): string {
   const safeDays = Math.max(0, targetDays);
   const base = asString(prev);
@@ -130,16 +109,8 @@ function bumpStayDaysText(prev: unknown, targetDays: number): string {
 }
 
 function raiseStayDaysText(prev: unknown, minDays: number): string {
-  const current = parseStayDays(prev) ?? 0;
+  const current = parseStayDays(prev);
   return bumpStayDaysText(prev, Math.max(minDays, current));
-}
-
-function isProblemRow(row: ShipmentRow): boolean {
-  const status = asString(row[KEY.status]).trim();
-  if (PROBLEM_STATUS_RE.test(status)) return true;
-
-  const stayDays = parseStayDays(row[KEY.stayDays]);
-  return stayDays != null && stayDays >= 5;
 }
 
 function collectProblemIds(rows: ShipmentRow[]): Set<string> {
@@ -298,9 +269,11 @@ export function createUpdateEngine(input: { baseline: ShipmentRow[] }) {
         if (!PROBLEM_STATUS_RE.test(asString(row[KEY.status]))) {
           row[KEY.status] = EXCEPTION_STATUS;
         }
+        applyBusinessFields(row, tickAtText, detectExceptionCategory(row));
       } else {
         row[KEY.stayDays] = bumpStayDaysText(row[KEY.stayDays], crypto.randomInt(0, 4));
         row[KEY.status] = pick(STATUS_POOL) ?? row[KEY.status];
+        applyBusinessFields(row, tickAtText, "正常履约");
       }
       row[KEY.updatedAt] = tickAtText;
     }
@@ -329,6 +302,7 @@ export function createUpdateEngine(input: { baseline: ShipmentRow[] }) {
         row[KEY.status] = EXCEPTION_STATUS;
       }
       row[KEY.updatedAt] = tickAtText;
+      applyBusinessFields(row, tickAtText);
 
       persistentProblemIds.add(key);
       injected += 1;

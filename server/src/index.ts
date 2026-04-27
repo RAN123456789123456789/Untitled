@@ -5,21 +5,9 @@ import path from "node:path";
 import { z } from "zod";
 import { readShipmentsFromExcel } from "./shipments";
 import { createUpdateEngine } from "./updateData";
+import { KEY, asString } from "./businessFields";
 
 type ShipmentRow = Record<string, unknown>;
-
-const KEY = {
-  orderNo: "\u7269\u6d41\u5355\u53f7",
-  status: "\u72b6\u6001",
-  currentCenter: "\u5f53\u524d\u4f4d\u7f6e",
-  prevCenter: "\u4e0a\u4e2a\u6570\u636e\u4e2d\u5fc3",
-  nextCenter: "\u4e0b\u4e2a\u6570\u636e\u4e2d\u5fc3",
-  product: "\u5546\u54c1\u4fe1\u606f",
-  receiver: "\u6536\u8d27\u4eba\u4fe1\u606f",
-  phone: "\u8054\u7cfb\u7535\u8bdd",
-  address: "\u6536\u8d27\u5730\u5740",
-  track: "\u7269\u6d41\u8f68\u8ff9",
-} as const;
 
 const QuerySchema = z.object({
   q: z.string().optional(),
@@ -29,18 +17,24 @@ const QuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional().default(0),
 });
 
-function asString(v: unknown): string {
-  if (v == null) return "";
-  return String(v);
-}
-
 function resolveExcelPath(): string {
+  const fromEnv = String(process.env.EXCEL_FILE ?? process.env.EXCEL_PATH ?? "").trim();
+  if (fromEnv) {
+    const resolved = path.isAbsolute(fromEnv) ? fromEnv : path.resolve(process.cwd(), fromEnv);
+    if (fs.existsSync(resolved)) return resolved;
+  }
+
+  const problemOrdersFile = path.resolve("C:/Users/ran/Desktop/有问题的订单数据.xlsx");
+  if (fs.existsSync(problemOrdersFile)) return problemOrdersFile;
+
   const name1 = "\u865a\u62df\u7269\u6d41\u5355\u53f7(3)_\u52a0\u524d\u540e\u6570\u636e\u4e2d\u5fc3.xlsx";
   const name2 = "\u865a\u62df\u7269\u6d41\u5355\u53f7(3).xlsx";
+  const sysDir = "\u7269\u6d41\u7cfb\u7edf";
 
+  // 与 tools 中同步目标一致：优先使用「物流系统」目录下的主数据表，避免与根目录副本长期不一致
   const candidates = [
+    path.resolve(process.cwd(), "..", sysDir, name1),
     path.resolve(process.cwd(), "..", name1),
-    path.resolve(process.cwd(), "..", "\u7269\u6d41\u7cfb\u7edf", name1),
     path.resolve(process.cwd(), "..", name2),
   ];
 
@@ -55,6 +49,8 @@ const app = express();
 app.use(cors());
 
 const excelPath = resolveExcelPath();
+// eslint-disable-next-line no-console
+console.log(`[server] Excel baseline: ${excelPath}`);
 const baselineRows = readShipmentsFromExcel(excelPath);
 const engine = createUpdateEngine({ baseline: baselineRows });
 engine.start();
@@ -87,6 +83,17 @@ app.get("/api/shipments", (req, res) => {
         row[KEY.currentCenter],
         row[KEY.prevCenter],
         row[KEY.nextCenter],
+        row[KEY.exceptionType],
+        row[KEY.handlingLevel],
+        row[KEY.priority],
+        row[KEY.workOrderStatus],
+        row[KEY.customsDeclarationNo],
+        row[KEY.customsStatus],
+        row[KEY.batchNo],
+        row[KEY.supplier],
+        row[KEY.temperatureStatus],
+        row[KEY.complaintStatus],
+        row[KEY.aiSuggestion],
       ]
         .filter(Boolean)
         .some((v) => String(v).includes(needle)),

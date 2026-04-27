@@ -1,35 +1,52 @@
 html,
-body {
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  background: #f5f7fb;
-}
-
+body,
 #root {
   min-height: 100%;
 }
 
-/* AntD 表格在窄屏/多列时更顺滑 */
-.ant-table {
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  color: #0f172a;
+  background: #eef3fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.ant-card {
+  backdrop-filter: blur(8px);
+}
+
+.ant-table-wrapper .ant-table {
   background: transparent;
 }
 
-.ant-table-container {
-  border-radius: 14px;
-}
-
 .ant-table-wrapper .ant-table-thead > tr > th {
-  background: #fafafa;
-  font-weight: 600;
+  color: rgba(15, 23, 42, 0.72);
+  font-weight: 700;
+  background: rgba(241, 245, 249, 0.82);
 }
 
-/* 顶部条更“控制台”一点 */
-.app-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  backdrop-filter: blur(8px);
+.ant-table-wrapper .ant-table-tbody > tr {
+  cursor: pointer;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr:hover > td {
+  background: rgba(230, 244, 255, 0.45) !important;
+}
+
+.ant-descriptions-bordered .ant-descriptions-item-label {
+  width: 120px;
 }
