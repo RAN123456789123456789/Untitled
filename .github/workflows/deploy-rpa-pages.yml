@@ -32,6 +32,8 @@ jobs:
           npm run build
         env:
           CI: true
+          # 自定义域名(根路径) 必须用 /; 仅使用 username.github.io/<repo>/ 时删除下一行
+          GH_PAGES_BASE: /
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
